@@ -11,8 +11,8 @@ env: # Global environment, passed to all jobs & all steps
   # Default to quay.io, which is also the default for the CLI.
   # Allow to use ghcr.io as an alternative, change & uncomment below:
   REGISTRY: "ghcr.io" # or quay.io, determines which will be logged-in to
-  #HOOK_KERNEL_OCI_BASE: "ghcr.io/${{ github.repository_owner }}/tinkerbell/kernel-"
-  #HOOK_LK_CONTAINERS_OCI_BASE: "ghcr.io/${{ github.repository_owner }}/tinkerbell/linuxkit-"
+  HOOK_KERNEL_OCI_BASE: "ghcr.io/${{ github.repository_owner }}/tinkerbell/kernel-"
+  HOOK_LK_CONTAINERS_OCI_BASE: "ghcr.io/${{ github.repository_owner }}/tinkerbell/linuxkit-"
 
   # Apart from the quay/ghcr coordinates above (used for both pulling & pushing), we might also want to
   # log in to DockerHub (with a read-only token) so we aren't hit by rate limits when pulling the linuxkit pkgs.
