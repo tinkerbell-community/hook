@@ -63,6 +63,8 @@ function calculate_kernel_version_armbian() {
 
 		WORKDIR /armbian/image
 
+		SHELL ["/bin/bash", "-c"]
+
 		# Get the kernel image...
 		RUN cp -v boot/vmlinuz* /armbian/output/kernel
 
