@@ -32,6 +32,9 @@ env: # Global environment, passed to all jobs & all steps
   CI_RUNNER_KERNEL_AMD64: "ubuntu-24.04" # Use a self-hosted runner with the "X86" tag for the AMD64 kernel builds
   CI_RUNNER_KERNEL_ARM64: "ubuntu-24.04-arm" # Use a self-hosted runner with the "ARM64" tag for the ARM64 kernel builds
 
+permissions:
+  contents: write
+  packages: write
 
 jobs:
 
