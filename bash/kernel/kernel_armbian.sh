@@ -63,10 +63,8 @@ function calculate_kernel_version_armbian() {
 
 		WORKDIR /armbian/image
 
-		SHELL ["/bin/bash", "-c"]
-
 		# Get the kernel image...
-		RUN cp -v boot/vmlinuz* /armbian/output/kernel
+		RUN cp -v boot/vmlinu* /armbian/output/kernel
 
 		# Create a tarball with the modules in lib.
 		# Important: this tarball needs to have permissions for the root directory included! Otherwise linuxkit rootfs will have the wrong permissions on / (root)
