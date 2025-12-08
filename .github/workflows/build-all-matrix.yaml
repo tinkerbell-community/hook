@@ -314,11 +314,6 @@ jobs:
           echo "tags=${tags}" >> "${GITHUB_OUTPUT}"
           echo "Container image tags: ${tags}"
 
-      - name: Install Buildah
-        run: |
-          sudo apt update
-          sudo apt install -y buildah
-
       - name: Docker Login to quay.io
         if: ${{ env.REGISTRY == 'quay.io' && env.QUAY_USERNAME != '' && env.QUAY_PASSWORD != '' }}
         uses: docker/login-action@v3
@@ -343,12 +338,12 @@ jobs:
             if [ -f "${file}" ]; then
               filename=$(basename "${file}")
               echo "Adding layer: ${file} -> ${filename}"
-              buildah add "${CONTAINER}" "${file}" "${filename}"
+              buildah copy "${CONTAINER}" "${file}" "${filename}"
             fi
           done
 
           echo "Adding layer: /dtb"
-          buildah add "${CONTAINER}" "./images/dtb" "/"
+          buildah copy "${CONTAINER}" ./images/dtb /
 
           # Parse tags and commit/push
           IMAGE_NAME="${{ env.REGISTRY }}/${{ github.repository }}"
@@ -358,7 +353,7 @@ jobs:
           # Commit with first tag
           FIRST_TAG="${TAG_ARRAY[0]}"
           echo "Committing container as ${IMAGE_NAME}:${FIRST_TAG}"
-          buildah commit --format oci "${CONTAINER}" "${IMAGE_NAME}:${FIRST_TAG}"
+          buildah commit "${CONTAINER}" "${IMAGE_NAME}:${FIRST_TAG}"
 
           # Tag with additional tags
           for tag in "${TAG_ARRAY[@]:1}"; do
