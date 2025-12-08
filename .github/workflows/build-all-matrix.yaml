@@ -21,9 +21,6 @@ env: # Global environment, passed to all jobs & all steps
 
   HOOK_VERSION: "0.11.1-build-${{github.run_number}}" # Use a forced Hook version
 
-  QUAY_USERNAME: "${{ secrets.QUAY_USERNAME || '' }}"
-  QUAY_PASSWORD: "${{ secrets.QUAY_PASSWORD || '' }}"
-
   # Which flavors to build? space separated list, must match one of the TAG='s in flavors (this is used by matrix_prep job in gha-matrix command)
   CI_TAGS: "standard armbian-sbc armbian-uefi lts" # 'dev' is not included
 
@@ -87,9 +84,9 @@ jobs:
               mirrors = ["mirror.gcr.io"]
 
       - name: Docker Login to quay.io
-        if: ${{ env.REGISTRY == 'quay.io' && github.ref == 'refs/heads/main' && env.QUAY_USERNAME != '' && env.QUAY_PASSWORD != '' }}
+        if: ${{ env.REGISTRY == 'quay.io' && github.ref == 'refs/heads/main' }}
         uses: docker/login-action@v3
-        with: { registry: "quay.io", username: "${{ env.QUAY_USERNAME }}", password: "${{ env.QUAY_PASSWORD }}" }
+        with: { registry: "quay.io", username: "${{ secrets.QUAY_USERNAME }}", password: "${{ secrets.QUAY_PASSWORD }}" }
 
       - name: Docker Login to GitHub Container Registry
         if: ${{ env.REGISTRY == 'ghcr.io' }}
@@ -187,9 +184,9 @@ jobs:
         with: { registry: "docker.io", username: "${{ secrets.DOCKERHUB_USERNAME }}", password: "${{ secrets.DOCKERHUB_PASSWORD }}" }
 
       - name: Docker Login to quay.io
-        if: ${{ env.REGISTRY == 'quay.io' && github.ref == 'refs/heads/main' && env.QUAY_USERNAME != '' && env.QUAY_PASSWORD != '' }}
+        if: ${{ env.REGISTRY == 'quay.io' && github.ref == 'refs/heads/main' }}
         uses: docker/login-action@v3
-        with: { registry: "quay.io", username: "${{ env.QUAY_USERNAME }}", password: "${{ env.QUAY_PASSWORD }}" }
+        with: { registry: "quay.io", username: "${{ secrets.QUAY_USERNAME }}", password: "${{ secrets.QUAY_PASSWORD }}" }
 
       - name: Docker Login to GitHub Container Registry
         if: ${{ env.REGISTRY == 'ghcr.io' }}
@@ -304,73 +301,59 @@ jobs:
             echo "DTB archive not found, skipping"
           fi
 
-      - name: Prepare image tags
-        id: image-tags
+      - name: Generate Dockerfile
         run: |
-          tags="latest"
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            tags="${tags},${{ github.ref_name }}"
-          fi
-          echo "tags=${tags}" >> "${GITHUB_OUTPUT}"
-          echo "Container image tags: ${tags}"
+          printf "FROM scratch\n" > Dockerfile
+
+          # Add kernel and initramfs files as separate COPY layers
+          for file in ./images/initramfs-* ./images/vmlinuz-*; do
+            if [ -f "${file}" ]; then
+              filename=$(basename "${file}")
+              echo "COPY ./images/${filename} /" >> Dockerfile
+            fi
+          done
+
+          # Add DTB files
+          echo "COPY ./images/dtb/* /dtb/" >> Dockerfile
+
+          echo "Generated Dockerfile:"
+          cat Dockerfile
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}
+          tags: |
+            type=raw,value=latest
+            type=ref,event=tag
+          labels: |
+            org.opencontainers.image.source="https://github.com/${{ github.repository }}"
+            org.opencontainers.image.description="Tinkerbell Hook OS image files"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Docker Login to quay.io
-        if: ${{ env.REGISTRY == 'quay.io' && env.QUAY_USERNAME != '' && env.QUAY_PASSWORD != '' }}
+        if: ${{ env.REGISTRY == 'quay.io' }}
         uses: docker/login-action@v3
-        with: { registry: "quay.io", username: "${{ env.QUAY_USERNAME }}", password: "${{ env.QUAY_PASSWORD }}" }
+        with: { registry: "quay.io", username: "${{ secrets.QUAY_USERNAME }}", password: "${{ secrets.QUAY_PASSWORD }}" }
 
       - name: Docker Login to GitHub Container Registry
         if: ${{ env.REGISTRY == 'ghcr.io' }}
         uses: docker/login-action@v3
         with: { registry: "ghcr.io", username: "${{ github.repository_owner }}", password: "${{ secrets.GITHUB_TOKEN }}" }
 
-      - name: Build and push Hook image with Buildah
-        run: |
-          set -x
-
-          # Create scratch container
-          CONTAINER=$(buildah from scratch)
-          echo "Created container: ${CONTAINER}"
-
-          # Add kernel and initramfs files as separate layers
-          echo "Adding kernel and initramfs files..."
-          for file in ./images/initramfs-* ./images/vmlinuz-*; do
-            if [ -f "${file}" ]; then
-              filename=$(basename "${file}")
-              echo "Adding layer: ${file} -> ${filename}"
-              buildah copy "${CONTAINER}" "${file}" "${filename}"
-            fi
-          done
-
-          echo "Adding layer: /dtb"
-          buildah copy "${CONTAINER}" ./images/dtb /
-
-          # Parse tags and commit/push
-          IMAGE_NAME="${{ env.REGISTRY }}/${{ github.repository }}"
-          TAGS="${{ steps.image-tags.outputs.tags }}"
-          IFS=',' read -ra TAG_ARRAY <<< "${TAGS}"
-
-          # Commit with first tag
-          FIRST_TAG="${TAG_ARRAY[0]}"
-          echo "Committing container as ${IMAGE_NAME}:${FIRST_TAG}"
-          buildah commit "${CONTAINER}" "${IMAGE_NAME}:${FIRST_TAG}"
-
-          # Tag with additional tags
-          for tag in "${TAG_ARRAY[@]:1}"; do
-            echo "Tagging as ${IMAGE_NAME}:${tag}"
-            buildah tag "${IMAGE_NAME}:${FIRST_TAG}" "${IMAGE_NAME}:${tag}"
-          done
-
-          # Push all tags
-          for tag in "${TAG_ARRAY[@]}"; do
-            echo "Pushing ${IMAGE_NAME}:${tag}"
-            buildah push "${IMAGE_NAME}:${tag}"
-          done
-
-          # Cleanup
-          buildah rm "${CONTAINER}"
-
-          echo "Successfully built and pushed image with tags: ${TAGS}"
+      - name: Build and push Hook image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Figure Out Commit Short ID
         id: commitid
@@ -384,20 +367,33 @@ jobs:
           git tag -d latest || echo "no local tag to delete"
           git push origin :latest -f || echo "no remote tag to delete"
 
-      - name: Generate Release Notes
-        if: github.ref == 'refs/heads/main'
+      - name: Determine release tag and name
+        id: release-info
         run: |
-          generated_release_notes=$(gh api 'repos/{owner}/{repo}/releases/generate-notes' -F tag_name=latest --jq .body)
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "tag=${{ github.ref_name }}" >> "${GITHUB_OUTPUT}"
+            echo "name=${{ github.ref_name }}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "tag=latest" >> "${GITHUB_OUTPUT}"
+            echo "name=Hook Latest Development Build" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Generate Release Notes
+        run: |
+          generated_release_notes=$(gh api 'repos/{owner}/{repo}/releases/generate-notes' -F tag_name=${{ steps.release-info.outputs.tag }} --jq .body)
+          if [[ "${{ github.ref }}" == refs/heads/main ]]; then
+            generated_release_notes="# :warning: :rotating_light: :boom: Note!!! :boom: :rotating_light: :warning:
+
+          The uploaded files will be updated on the next merge to main, as such download them before use to avoid surprises.
+
+          ---
+          Commit: ${{steps.commitid.outputs.short}}
+          ---
+
+          ${generated_release_notes}"
+          fi
           cat >>"$GITHUB_ENV" <<-EOF
           	RELEASE_NOTES<<RELEASE_NOTES_EOF
-          	# :warning: :rotating_light: :boom: Note!!! :boom: :rotating_light: :warning:
-
-          	The uploaded files will be updated on the next merge to main, as such download them before use to avoid surprises.
-
-          	---
-          	Commit: ${{steps.commitid.outputs.short}}
-          	---
-
           	$generated_release_notes
           	RELEASE_NOTES_EOF
           EOF
@@ -412,7 +408,6 @@ jobs:
           message: "Latest development build"
 
       - name: Generate checksum
-        if: github.ref == 'refs/heads/main'
         uses: jmgilman/actions-generate-checksum@v1
         with:
           method: sha512
@@ -420,63 +415,15 @@ jobs:
             *.tar.gz
             *.iso
 
-      - name: Update latest release
-        if: github.ref == 'refs/heads/main'
+      - name: Update release
         uses: softprops/action-gh-release@v2
         with:
-          name: Hook Latest Development Build
-          body: ${{env.RELEASE_NOTES}}
+          name: ${{ steps.release-info.outputs.name }}
+          body: ${{ env.RELEASE_NOTES }}
           files: |
             *.tar.gz
             *.iso
             checksum.txt
           prerelease: true
-          tag_name: latest
+          tag_name: ${{ steps.release-info.outputs.tag }}
           draft: false
-
-  release-tag:
-    name: Publish all Hooks to GitHub Releases for a tag
-    needs: [ matrix_prep, build-hook-ensemble ]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Download built Hook artifacts
-        uses: actions/download-artifact@v5
-        with:
-          pattern: "hook-tarball-*"
-          merge-multiple: true
-
-      - name: Generate Release Notes
-        run: |
-          generated_release_notes=$(gh api 'repos/{owner}/{repo}/releases/generate-notes' -F tag_name=${{github.ref}} --jq .body)
-          cat >>"$GITHUB_ENV" <<-EOF
-          	RELEASE_NOTES<<RELEASE_NOTES_EOF
-          	$generated_release_notes
-          	RELEASE_NOTES_EOF
-          EOF
-        env:
-          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
-
-      - name: Generate checksum
-        uses: jmgilman/actions-generate-checksum@v1
-        with:
-          method: sha512
-          patterns: |
-            *.tar.gz
-            *.iso
-
-      - name: Update tag release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: ${{github.ref}}
-          body: ${{env.RELEASE_NOTES}}
-          files: |
-            *.tar.gz
-            *.iso
-            checksum.txt
-          prerelease: true
-          tag_name: ${{github.ref}}
