@@ -316,8 +316,8 @@ jobs:
 
       - name: Install Buildah
         run: |
-          apt update
-          apt install -y buildah
+          sudo apt update
+          sudo apt install -y buildah
 
       - name: Docker Login to quay.io
         if: ${{ env.REGISTRY == 'quay.io' && env.QUAY_USERNAME != '' && env.QUAY_PASSWORD != '' }}
