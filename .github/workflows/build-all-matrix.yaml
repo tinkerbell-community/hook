@@ -314,7 +314,7 @@ jobs:
             fi
           done
           echo "paths<<EOF" >> "${GITHUB_OUTPUT}"
-          echo -e "${files}" >> "${GITHUB_OUTPUT}"
+          printf "${files}" >> "${GITHUB_OUTPUT}"
           echo "EOF" >> "${GITHUB_OUTPUT}"
 
       - name: Prepare image tags
