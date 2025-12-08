@@ -342,22 +342,13 @@ jobs:
           for file in ./images/initramfs-* ./images/vmlinuz-*; do
             if [ -f "${file}" ]; then
               filename=$(basename "${file}")
-              echo "Adding layer: ${file} -> /images/${filename}"
-              buildah add "${CONTAINER}" "${file}" "/images/${filename}"
+              echo "Adding layer: ${file} -> ${filename}"
+              buildah add "${CONTAINER}" "${file}" "${filename}"
             fi
           done
 
-          # Add DTB files as separate layers
-          if [ -d "./images/dtb" ]; then
-            echo "Adding DTB files..."
-            for file in ./images/dtb/*; do
-              if [ -f "${file}" ]; then
-                filename=$(basename "${file}")
-                echo "Adding layer: ${file} -> /images/dtb/${filename}"
-                buildah add "${CONTAINER}" "${file}" "/images/dtb/${filename}"
-              fi
-            done
-          fi
+          echo "Adding layer: /dtb"
+          buildah add "${CONTAINER}" "./images/dtb" "/"
 
           # Parse tags and commit/push
           IMAGE_NAME="${{ env.REGISTRY }}/${{ github.repository }}"
