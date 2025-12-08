@@ -280,25 +280,32 @@ jobs:
           pattern: "hook-tarball-*"
           merge-multiple: true
 
-      - name: Extract Hook artifacts to images directory
+      - name: Extract Hook artifacts to output directory
         run: |
-          mkdir -p images
+          mkdir -p output
           for tarball in *.tar.gz; do
             echo "Extracting ${tarball}..."
-            tar -xzf "${tarball}" -C images/
+            tar -xzf "${tarball}" -C output/
           done
-          ls -lah images/
+
+          ls -lah output/
 
       - name: Extract DTB archive
+        working-directory: output
         run: |
-          if [ -f "images/dtbs-armbian-bcm2711-current.tar.gz" ]; then
-            mkdir -p images/dtb
-            tar -xzf images/dtbs-armbian-bcm2711-current.tar.gz -C images/dtb/
-            rm images/dtbs-armbian-bcm2711-current.tar.gz
+          mkdir -p dtb
+          for dtb_archive in dtbs-*.tar.gz; do
+            if [ -f "${dtb_archive}" ]; then
+              echo "Extracting ${dtb_archive}..."
+              tar -xzf "${dtb_archive}" -C dtb/
+              rm "${dtb_archive}"
+            fi
+          done
+          if [ -d "dtb" ] && [ -n "$(ls -A dtb 2>/dev/null)" ]; then
             echo "DTB files extracted:"
-            ls -lah images/dtb/
+            ls -lah dtb/
           else
-            echo "DTB archive not found, skipping"
+            echo "No DTB archives found or extracted"
           fi
 
       - name: Generate Dockerfile
@@ -306,15 +313,15 @@ jobs:
           printf "FROM scratch\n" > Dockerfile
 
           # Add kernel and initramfs files as separate COPY layers
-          for file in ./images/initramfs-* ./images/vmlinuz-*; do
+          for file in output/initramfs-* output/vmlinuz-*; do
             if [ -f "${file}" ]; then
               filename=$(basename "${file}")
-              echo "COPY ./images/${filename} /" >> Dockerfile
+              echo "COPY ${filename} /" >> Dockerfile
             fi
           done
 
           # Add DTB files
-          echo "COPY ./images/dtb/* /dtb/" >> Dockerfile
+          echo "COPY dtb/* /dtb/" >> Dockerfile
 
           echo "Generated Dockerfile:"
           cat Dockerfile
@@ -330,6 +337,9 @@ jobs:
           labels: |
             org.opencontainers.image.source="https://github.com/${{ github.repository }}"
             org.opencontainers.image.description="Tinkerbell Hook OS image files"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -347,8 +357,9 @@ jobs:
       - name: Build and push Hook image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ./output
           file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
