@@ -304,19 +304,6 @@ jobs:
             echo "DTB archive not found, skipping"
           fi
 
-      - name: Enumerate kernel and initramfs files
-        id: enumerate-files
-        run: |
-          files=""
-          for file in ./images/initramfs-* ./images/vmlinuz-*; do
-            if [ -f "${file}" ]; then
-              files="${files}${file}\n"
-            fi
-          done
-          echo "paths<<EOF" >> "${GITHUB_OUTPUT}"
-          printf "${files}" >> "${GITHUB_OUTPUT}"
-          echo "EOF" >> "${GITHUB_OUTPUT}"
-
       - name: Prepare image tags
         id: image-tags
         run: |
@@ -326,6 +313,11 @@ jobs:
           fi
           echo "tags=${tags}" >> "${GITHUB_OUTPUT}"
           echo "Container image tags: ${tags}"
+
+      - name: Install Buildah
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y buildah
 
       - name: Docker Login to quay.io
         if: ${{ env.REGISTRY == 'quay.io' && env.QUAY_USERNAME != '' && env.QUAY_PASSWORD != '' }}
@@ -338,23 +330,61 @@ jobs:
         with: { registry: "ghcr.io", username: "${{ github.repository_owner }}", password: "${{ secrets.GITHUB_TOKEN }}" }
 
       - name: Build and push Hook image with Buildah
-        uses: redhat-actions/buildah-build@v2
-        with:
-          image: ${{ env.REGISTRY }}/${{ github.repository }}
-          tags: ${{ steps.image-tags.outputs.tags }}
-          content: |
-            ${{ steps.enumerate-files.outputs.paths }}
-            ./images/dtb/*
-          context: .
-          base-image: scratch
-          oci: true
+        run: |
+          set -x
 
-      - name: Push Hook image to registry
-        uses: redhat-actions/push-to-registry@v2
-        with:
-          image: ${{ env.REGISTRY }}/${{ github.repository }}
-          tags: ${{ steps.image-tags.outputs.tags }}
-          registry: ${{ env.REGISTRY }}
+          # Create scratch container
+          CONTAINER=$(buildah from scratch)
+          echo "Created container: ${CONTAINER}"
+
+          # Add kernel and initramfs files as separate layers
+          echo "Adding kernel and initramfs files..."
+          for file in ./images/initramfs-* ./images/vmlinuz-*; do
+            if [ -f "${file}" ]; then
+              filename=$(basename "${file}")
+              echo "Adding layer: ${file} -> /images/${filename}"
+              buildah add "${CONTAINER}" "${file}" "/images/${filename}"
+            fi
+          done
+
+          # Add DTB files as separate layers
+          if [ -d "./images/dtb" ]; then
+            echo "Adding DTB files..."
+            for file in ./images/dtb/*; do
+              if [ -f "${file}" ]; then
+                filename=$(basename "${file}")
+                echo "Adding layer: ${file} -> /images/dtb/${filename}"
+                buildah add "${CONTAINER}" "${file}" "/images/dtb/${filename}"
+              fi
+            done
+          fi
+
+          # Parse tags and commit/push
+          IMAGE_NAME="${{ env.REGISTRY }}/${{ github.repository }}"
+          TAGS="${{ steps.image-tags.outputs.tags }}"
+          IFS=',' read -ra TAG_ARRAY <<< "${TAGS}"
+
+          # Commit with first tag
+          FIRST_TAG="${TAG_ARRAY[0]}"
+          echo "Committing container as ${IMAGE_NAME}:${FIRST_TAG}"
+          buildah commit --format oci "${CONTAINER}" "${IMAGE_NAME}:${FIRST_TAG}"
+
+          # Tag with additional tags
+          for tag in "${TAG_ARRAY[@]:1}"; do
+            echo "Tagging as ${IMAGE_NAME}:${tag}"
+            buildah tag "${IMAGE_NAME}:${FIRST_TAG}" "${IMAGE_NAME}:${tag}"
+          done
+
+          # Push all tags
+          for tag in "${TAG_ARRAY[@]}"; do
+            echo "Pushing ${IMAGE_NAME}:${tag}"
+            buildah push "${IMAGE_NAME}:${tag}"
+          done
+
+          # Cleanup
+          buildah rm "${CONTAINER}"
+
+          echo "Successfully built and pushed image with tags: ${TAGS}"
 
       - name: Figure Out Commit Short ID
         id: commitid
